@@ -134,11 +134,14 @@ KEY="e2e-$(openssl rand -hex 16)"
 printf '%s\n' "$KEY" > "$KEYFILE"
 chmod 600 "$KEYFILE"
 # Simulate a crash left a lock behind; the entrypoint must remove it and start.
-# On Linux Firefox's `lock` is a dangling symlink to "<ip>:+<pid>"; after a pod
-# restart the IP differs, so Firefox treats it as held by another machine.
-ln -s "10.255.255.1:+4242" "$PROFILE/lock"
-echo "stale" > "$PROFILE/.parentlock"
-echo "note: planted stale ${PROFILE}/lock and .parentlock"
+# On Linux Firefox's `lock` is a dangling symlink to "<ip>:+<pid>", and it lives
+# in the firefox_devtools_mcp_profile/ subdir that the MCP server actually runs
+# Firefox in (not in FIREFOX_PROFILE itself).
+LOCKDIR="$PROFILE/firefox_devtools_mcp_profile"
+mkdir -p "$LOCKDIR"
+ln -s "10.255.255.1:+4242" "$LOCKDIR/lock"
+echo "stale" > "$LOCKDIR/.parentlock"
+echo "note: planted stale ${LOCKDIR}/lock and .parentlock"
 
 MCP_PORT="$(free_port)"
 env MCP_HOST=127.0.0.1 \
@@ -166,6 +169,13 @@ for i in $(seq 1 120); do
 done
 [ -n "$READY" ] || { echo "error: /healthz never became ready; log:" >&2; cat "$LOGS/entrypoint.log" >&2; exit 1; }
 echo "ok: /healthz is up (stale lock did not block launch)"
+# Firefox is launched lazily on the first browser tool call, so anything still
+# at the planted paths now would be the stale lock the entrypoint should remove.
+if [ -L "$LOCKDIR/lock" ] || [ -e "$LOCKDIR/.parentlock" ]; then
+  echo "error: entrypoint did not remove the stale lock in $LOCKDIR" >&2
+  exit 1
+fi
+echo "ok: entrypoint removed the stale lock"
 
 # --- 7. Smoke test (full MCP session) -------------------------------------
 echo

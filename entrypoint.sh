@@ -53,7 +53,7 @@ fi
 
 # --- Tool surface -----------------------------------------------------------
 # Default: the "basic" preset minus webextension and screencast.
-#   - screencast needs Firefox 154+; this image ships Debian ESR 140 -> broken.
+#   - screencast needs Firefox 154+; Debian's ESR in this image is older.
 #   - webextension (install_extension) can persist an extension into the
 #     logged-in profile -> a privilege/persistence risk.
 # Set MCP_TOOLS="" to fall back to the TOOL_PRESET instead.
@@ -75,7 +75,13 @@ STDIO_CMD="firefox-devtools-mcp --headless --viewport ${VIEWPORT} --firefoxPath 
 # SIGKILL / node eviction). Remove it so a fresh launch isn't blocked by a
 # lock owned by a dead process. On Linux `lock` is a dangling symlink to
 # "<ip>:+<pid>", so test nothing (`[ -f ]` is false for it) -- just rm -f.
-rm -f "${PROFILE}/lock" "${PROFILE}/.parentlock"
+# firefox-devtools-mcp does not run Firefox in --profilePath itself: it uses
+# (and creates) the subdirectory firefox_devtools_mcp_profile/ inside it, so
+# that is where the live lock is. A restarted container often gets the same
+# IP, and the recorded PID can belong to a different process in the new one.
+for dir in "${PROFILE}" "${PROFILE}/firefox_devtools_mcp_profile"; do
+    rm -f "${dir}/lock" "${dir}/.parentlock"
+done
 
 # --- CWD for relative save paths -------------------------------------------
 # The MCP server resolves relative save paths against the process CWD. Point

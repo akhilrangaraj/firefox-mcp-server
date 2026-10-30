@@ -59,9 +59,11 @@ real Firefox (cached and reused across runs), and then asserts:
 
 Run it any time: `bash tests/local-e2e.sh`.
 
-What it does **not** cover: the image itself (Debian Firefox ESR 140; the test
+What it does **not** cover: the image itself (Debian `firefox-esr`; the test
 uses the current Firefox release, so version-gated behaviour can differ), the
 k8s manifests, and two concurrent MCP sessions contending for the profile lock.
+The image was smoke-tested separately with `docker run` + `scripts/smoke-test.sh`,
+including a `SIGKILL` and restart on the same profile volume.
 
 ## Quickstart
 
@@ -149,24 +151,26 @@ names) selects them; if you set it to the empty string it falls back to
   `pages,snapshot,input,screenshot,print,downloads,script,utilities,management`.
 - **`webextension`** (`install_extension`) is excluded because it can persist an
   extension into the **logged-in** profile -- a persistence/privilege risk.
-- **`screencast`** is excluded because it needs Firefox 154+, while this image
-  ships ESR 140 (see below) -- it can never work here.
+- **`screencast`** is excluded because it needs Firefox 154+, newer than the
+  image's ESR (see below).
 - **`script`** (`evaluate_script`) is **included**: it lets the agent run
   arbitrary JavaScript in logged-in pages. Powerful, but exactly as trusted (or
   untrusted) as the pages you point it at -- see the prompt-injection note.
 
 ## Firefox ESR version limits
 
-The image ships **Firefox ESR 140** (Debian `firefox-esr`). Some tool modules
-need newer Firefox and will not work on this image:
+The image installs Debian's `firefox-esr`, so its version follows Debian's ESR
+updates. As of the last build (2026-10-29) that was **Firefox 153.6.0esr**;
+check with `docker run --rm --entrypoint firefox <image> --version`. Some tool
+modules are version-gated:
 
-- **`screencast`** and **`profiler`**: require **Firefox 154+** -> unavailable.
-- **`debugging`** (logpoints, breakpoints): requires **Firefox 153+** ->
-  unavailable.
+- **`screencast`** and **`profiler`**: require **Firefox 154+** -> unavailable
+  until Debian ships a newer ESR.
+- **`debugging`** (logpoints, breakpoints): requires **Firefox 153+** -> works
+  on 153.6 (not in the default `MCP_TOOLS`).
 
-So the `developer` / `mozilla` / `all` presets are only useful for the modules
-that don't depend on those features. The `local-e2e` test uses a newer Firefox
-downloaded on the fly and is not bound by these limits.
+The `local-e2e` test uses a newer Firefox downloaded on the fly and is not
+bound by these limits.
 
 ## Layout
 
@@ -214,6 +218,14 @@ tests/local-e2e.sh         full local end-to-end test (no docker / cluster)
   "true"` (any namespace). `kubectl port-forward` is unaffected (enters via the
   kubelet).
 - Runs **non-root**, drops all capabilities, `seccompProfile: RuntimeDefault`.
+- **Firefox's sandbox is reduced in the container**: it logs
+  `CanCreateUserNamespace() clone() failure: EPERM` and runs content processes
+  without user namespaces (seccomp filtering still applies). As with Chromium's
+  `--no-sandbox`, the container is the main isolation boundary.
+- **Profile location**: firefox-devtools-mcp doesn't run Firefox in
+  `FIREFOX_PROFILE` directly but in its `firefox_devtools_mcp_profile/`
+  subdirectory (on the PVC, so logins persist). The entrypoint clears stale
+  locks there on start.
 - **Prompt injection**: pages can contain instructions aimed at the agent, and
   `script` can run JS in logged-in pages. Only browse sites you trust with a
   logged-in profile.
@@ -252,7 +264,7 @@ all checked out. The problems were in what it built around them:
 | 1 | No authentication, although supergateway supports `--apiKey`. The default `basic` preset includes `evaluate_script` and `install_extension`, so any pod in the cluster could steal cookies from the logged-in browser or install an extension that persists on the PVC. | High |
 | 2 | supergateway doesn't check `Origin` or `Host`, so a workstation `port-forward` could be driven through DNS rebinding by any website. | Medium |
 | 3 | `--stateful` spawns a new stdio child, and so a new Firefox, **per MCP session**, all on one profile. The README described one long-lived browser; in fact a second concurrent session hits the profile lock. | Medium |
-| 4 | Debian's Firefox ESR 140 can't run `screencast` (needs 154+), which the default preset advertises. | Low |
+| 4 | Debian's Firefox ESR can't run `screencast` (needs 154+), which the default preset advertises. (The audit said ESR 140 from Debian's package index; the image built later had 153.6.) | Low |
 | 5 | The smoke test's grep required a space that compact JSON never has, so under `pipefail` it aborted before testing navigation. | Low |
 | 6 | TCP-only probes, `publishNotReadyAddresses`, a broken `cp` line in the README, the k3s/Calico claim, and a no-op loopback egress rule. | Low |
 
@@ -282,7 +294,7 @@ through the model reload.
 - **Key in the process list:** `deploy.sh` now feeds the generated key to
   `kubectl` through stdin, so it never appears in `ps`.
 - **Test coverage stated:** the README now lists what the e2e test doesn't
-  cover: the ESR 140 image, the k8s manifests, and concurrent sessions.
+  cover: the ESR image, the k8s manifests, and concurrent sessions.
 
 ### Token usage for this repo's fix
 
@@ -309,3 +321,26 @@ got a chance to run: `RUN chmod +x` on a root-owned `COPY`'d file, executed
 after `USER`. Both bugs date from qwen's original Dockerfile. The fix reuses
 the `node` user and sets the mode with `COPY --chmod=0755`. The lesson for the
 benchmark: a review without a build or deploy step misses build-time bugs.
+
+Once Docker was running locally, running the image (not just building it)
+found more:
+
+- **Lock cleanup in the wrong directory.** firefox-devtools-mcp runs Firefox
+  in `$FIREFOX_PROFILE/firefox_devtools_mcp_profile/`, not in
+  `$FIREFOX_PROFILE`, so the entrypoint's stale-lock cleanup (fixed once
+  already for the symlink check) was clearing a path that never has a lock.
+  The live lock was `lock -> 172.17.0.2:+67`. A restarted container often
+  gets the same IP, and in a fresh container PID 67 can belong to a different
+  process. Both qwen's spec-following and Claude's source reading missed that
+  `resolveProfilePath` redirects into the subdirectory. The e2e test now
+  plants the lock there and asserts the entrypoint removed it; that assertion
+  fails against the previous entrypoint.
+- **Wrong Firefox version.** The audit read "ESR 140" from Debian's package
+  index; the built image has 153.6.0esr, so `debugging` works and only
+  `screencast`/`profiler` remain unavailable.
+- **Reduced Firefox sandbox** in the container (no user namespaces), now
+  documented.
+
+Verified with `docker run`: 401 without a key, `/healthz`, a full MCP session
+navigating https://example.com, cookies persisted on the volume, and a clean
+recovery after `SIGKILL` and restart on the same profile volume.

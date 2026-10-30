@@ -60,8 +60,8 @@ spec:
             # Tool surface: comma-separated list of tool modules, passed to the
             # MCP server as --tools. This default is the "basic" preset minus
             # webextension (can persist an extension into the logged-in
-            # profile) and screencast (needs Firefox 154+; this image ships
-            # ESR 140, so it can never work here).
+            # profile) and screencast (needs Firefox 154+, newer than the
+            # Debian ESR in the image).
             - name: MCP_TOOLS
               value: "pages,snapshot,input,screenshot,print,downloads,script,utilities,management"
             # Used only if MCP_TOOLS is set to the empty string.
