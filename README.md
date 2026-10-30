@@ -298,3 +298,14 @@ parsing. Each call also re-sends the whole conversation, so input grows
 faster than the number of calls.
 Claude's spec for this repo, and its share of the audit, are counted in
 url-render-service's table.
+
+### What everyone missed: the first CI build
+
+Neither the audit, the fix run nor the review built the image; no Docker
+daemon was available locally. The first Gitea CI build failed:
+`node:22-slim` already has a `node` user at uid/gid 1000, so
+`groupadd -g 1000 appuser` failed. Behind it was a second failure that never
+got a chance to run: `RUN chmod +x` on a root-owned `COPY`'d file, executed
+after `USER`. Both bugs date from qwen's original Dockerfile. The fix reuses
+the `node` user and sets the mode with `COPY --chmod=0755`. The lesson for the
+benchmark: a review without a build or deploy step misses build-time bugs.
