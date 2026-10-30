@@ -1,0 +1,38 @@
+# Egress-only anti-SSRF policy (same shape as url-render-service): allow DNS +
+# public internet, block every private / loopback / link-local / metadata range
+# so the browser can't be pointed at in-cluster services or the cloud metadata
+# endpoint. On k3s this only takes effect with `--enable-network-policy`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firefox-mcp-egress
+  namespace: firefox-mcp
+  labels:
+    app: firefox-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app: firefox-mcp
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (any destination).
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Public internet only.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16   # cloud metadata (169.254.169.254)
+              - 127.0.0.0/8
+              - 100.64.0.0/10    # CGNAT
+              - 198.18.0.0/15    # benchmarking
+    # Loopback.
+    - to:
+        - ipBlock:
+            cidr: 127.0.0.1/32

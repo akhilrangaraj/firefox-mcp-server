@@ -1,0 +1,90 @@
+# One stateful Firefox + MCP server. The persistent profile lives on a PVC
+# (volumeClaimTemplate) so logins / cookies survive pod restarts.
+#
+# Requires a StorageClass (for the volumeClaimTemplate). On k3s that is
+# `local-path` by default.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: firefox-mcp
+  namespace: firefox-mcp
+  labels:
+    app: firefox-mcp
+    app.kubernetes.io/name: firefox-mcp-server
+spec:
+  replicas: 1
+  serviceName: firefox-mcp
+  selector:
+    matchLabels:
+      app: firefox-mcp
+  template:
+    metadata:
+      labels:
+        app: firefox-mcp
+        app.kubernetes.io/name: firefox-mcp-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Firefox is memory-hungry; give it headroom and a bigger /dev/shm.
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+      containers:
+        - name: firefox-mcp
+          # <-- replaced by scripts/deploy.sh (or your GitOps) with the real image
+          image: REPLACE_WITH_REGISTRY/firefox-mcp-server:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: mcp
+              containerPort: 8931
+              protocol: TCP
+          env:
+            - name: TOOL_PRESET
+              value: "basic"     # slim | basic | developer | mozilla | all
+            - name: VIEWPORT
+              value: "1280x720"
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "900Mi"
+            limits:
+              cpu: "2"
+              memory: "3Gi"
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: ff-profile
+              mountPath: /data
+            - name: shm
+              mountPath: /dev/shm
+  volumeClaimTemplates:
+    - metadata:
+        name: ff-profile
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

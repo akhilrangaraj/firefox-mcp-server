@@ -1,0 +1,19 @@
+# Headless Service for the StatefulSet's stable network identity. You still
+# reach the MCP endpoint via `kubectl port-forward svc/firefox-mcp`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: firefox-mcp
+  namespace: firefox-mcp
+  labels:
+    app: firefox-mcp
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: firefox-mcp
+  ports:
+    - name: mcp
+      port: 8931
+      targetPort: mcp
+      protocol: TCP

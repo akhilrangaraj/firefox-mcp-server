@@ -1,0 +1,6 @@
+.git
+node_modules
+*.log
+.k8s.local.yaml
+.DS_Store
+README.md

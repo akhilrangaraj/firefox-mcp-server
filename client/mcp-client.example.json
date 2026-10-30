@@ -1,0 +1,9 @@
+{
+  "_comment": "MCP client config for the in-cluster Firefox MCP server. Assumes `scripts/port-forward.sh` is running (svc -> 127.0.0.1:8931).",
+  "mcpServers": {
+    "firefox": {
+      "type": "http",
+      "url": "http://127.0.0.1:8931/mcp"
+    }
+  }
+}
