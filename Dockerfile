@@ -32,13 +32,13 @@ RUN set -eux; \
     /usr/local/bin/geckodriver --version; \
     rm -rf /tmp/node_modules /tmp/package.json /tmp/package-lock.json /tmp/geo
 
-# Non-root user. /data holds the persistent Firefox profile (a PVC is mounted
-# there at runtime); the MCP server's own scratch dir lives under /home.
-RUN groupadd -g 1000 appuser \
-    && useradd -m -u 1000 -g 1000 appuser \
-    && mkdir -p /data/ff-profile /home/appuser/.firefox-devtools-mcp \
-    && chown -R appuser:appuser /data /home/appuser/.firefox-devtools-mcp
-USER appuser
+# Non-root user: reuse the base image's `node` user, which already owns
+# uid/gid 1000 (creating another uid-1000 user fails). /data holds the
+# persistent Firefox profile (a PVC is mounted there at runtime); the MCP
+# server's own scratch dir lives under $HOME.
+RUN mkdir -p /data/ff-profile /home/node/.firefox-devtools-mcp \
+    && chown -R node:node /data /home/node/.firefox-devtools-mcp
+USER node
 
 ENV FIREFOX_PATH=/usr/local/bin/firefox \
     FIREFOX_PROFILE=/data/ff-profile \
@@ -53,7 +53,8 @@ EXPOSE 8931
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8931/healthz || exit 1
 
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# COPY always creates root-owned files, and a RUN chmod here would execute as
+# `node` and fail -- so set the mode at copy time.
+COPY --chmod=0755 entrypoint.sh /app/entrypoint.sh
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]
