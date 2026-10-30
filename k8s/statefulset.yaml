@@ -36,6 +36,13 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 512Mi
+        # API key(s) for supergateway. The key `api-keys` is exposed as the
+        # file /run/secrets/mcp/api-keys (the entrypoint's default
+        # MCP_API_KEY_FILE). fsGroup 1000 makes it readable by the container.
+        - name: mcp-auth
+          secret:
+            secretName: firefox-mcp-auth
+            defaultMode: 0440
       containers:
         - name: firefox-mcp
           # <-- replaced by scripts/deploy.sh (or your GitOps) with the real image
@@ -50,8 +57,20 @@ spec:
               containerPort: 8931
               protocol: TCP
           env:
+            # Tool surface: comma-separated list of tool modules, passed to the
+            # MCP server as --tools. This default is the "basic" preset minus
+            # webextension (can persist an extension into the logged-in
+            # profile) and screencast (needs Firefox 154+; this image ships
+            # ESR 140, so it can never work here).
+            - name: MCP_TOOLS
+              value: "pages,snapshot,input,screenshot,print,downloads,script,utilities,management"
+            # Used only if MCP_TOOLS is set to the empty string.
             - name: TOOL_PRESET
               value: "basic"     # slim | basic | developer | mozilla | all
+            # Abandoned MCP sessions are reaped after this long (ms), which
+            # releases the shared Firefox profile lock. 900000 = 15 min.
+            - name: MCP_SESSION_TIMEOUT_MS
+              value: "900000"
             - name: VIEWPORT
               value: "1280x720"
           resources:
@@ -61,15 +80,19 @@ spec:
             limits:
               cpu: "2"
               memory: "3Gi"
+          # supergateway answers GET /healthz with 200 "ok" before the API-key
+          # check, so probes work without a key.
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: mcp
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: mcp
             initialDelaySeconds: 30
             periodSeconds: 30
@@ -80,6 +103,9 @@ spec:
               mountPath: /data
             - name: shm
               mountPath: /dev/shm
+            - name: mcp-auth
+              mountPath: /run/secrets/mcp
+              readOnly: true
   volumeClaimTemplates:
     - metadata:
         name: ff-profile

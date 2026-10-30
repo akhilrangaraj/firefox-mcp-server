@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build (and optionally push) the Firefox MCP server image.
-#   REGISTRY=registry.example.com/akhil ./scripts/build.sh --push
+#   ./scripts/build.sh --push
+#   REGISTRY=other.example.com/akhil TAG=main ./scripts/build.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-REGISTRY="${REGISTRY:?set REGISTRY, e.g. registry.example.com/akhil}"
+REGISTRY="${REGISTRY:-registry.rangaraj.net/akhilrangaraj}"
 TAG="${TAG:-latest}"
 IMG="${REGISTRY}/firefox-mcp-server:${TAG}"
 

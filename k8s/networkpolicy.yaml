@@ -1,7 +1,15 @@
 # Egress-only anti-SSRF policy (same shape as url-render-service): allow DNS +
-# public internet, block every private / loopback / link-local / metadata range
-# so the browser can't be pointed at in-cluster services or the cloud metadata
-# endpoint. On k3s this only takes effect with `--enable-network-policy`.
+# public internet, block every private / link-local / metadata range so the
+# browser can't be pointed at in-cluster services or the cloud metadata
+# endpoint.
+#
+# Caveats:
+#   * NetworkPolicies NEVER apply to loopback traffic -- the CNI programs no
+#     rules for 127.0.0.0/8, so loopback is not covered by this policy (a
+#     127.0.0.1/32 egress rule here would be a no-op and has been removed).
+#   * On k3s, NetworkPolicy is enforced BY DEFAULT by the embedded kube-router
+#     controller; it is disabled only by starting k3s with
+#     --disable-network-policy.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,19 +28,46 @@ spec:
     - ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # Public internet only.
+    # Public internet only (private / link-local / metadata / reserved ranges
+    # excluded).
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
+              - 0.0.0.0/8         # "this" network (RFC 1122)
               - 10.0.0.0/8
+              - 100.64.0.0/10     # CGNAT
               - 172.16.0.0/12
               - 192.168.0.0/16
-              - 169.254.0.0/16   # cloud metadata (169.254.169.254)
-              - 127.0.0.0/8
-              - 100.64.0.0/10    # CGNAT
-              - 198.18.0.0/15    # benchmarking
-    # Loopback.
-    - to:
-        - ipBlock:
-            cidr: 127.0.0.1/32
+              - 169.254.0.0/16    # link-local / cloud metadata (169.254.169.254)
+              - 198.18.0.0/15     # benchmarking
+              - 224.0.0.0/4       # multicast
+              - 240.0.0.0/4       # reserved / future use
+---
+# Ingress: only MCP clients may reach the gateway on TCP 8931 -- pods labelled
+# mcp-client: "true", in any namespace.
+#
+# `kubectl port-forward` is UNAFFECTED: it enters via the kubelet, not through
+# pod-network policy. If your CNI blocks the kubelet's own probe / port-forward
+# path, add the node CIDR (e.g. 10.42.0.0/16 on k3s) as an extra `from` entry.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firefox-mcp-ingress
+  namespace: firefox-mcp
+  labels:
+    app: firefox-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app: firefox-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8931 }
+      from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              mcp-client: "true"

@@ -9,7 +9,6 @@ metadata:
     app: firefox-mcp
 spec:
   clusterIP: None
-  publishNotReadyAddresses: true
   selector:
     app: firefox-mcp
   ports:

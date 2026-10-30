@@ -48,10 +48,10 @@ ENV FIREFOX_PATH=/usr/local/bin/firefox \
     TOOL_PRESET=basic
 
 EXPOSE 8931
-# Reliable liveness: the MCP endpoint is POST/JSON-RPC, so probe the TCP port
-# (supergateway listening) instead of doing an HTTP GET at /mcp.
+# supergateway serves GET /healthz with 200 "ok" (registered before the
+# API-key check, so no key is needed).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD node -e 'const n=require("net");const s=n.connect(8931,"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1));setTimeout(()=>process.exit(1),3000)'
+    CMD curl -fsS http://127.0.0.1:8931/healthz || exit 1
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
